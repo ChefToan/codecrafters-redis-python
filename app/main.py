@@ -1,6 +1,9 @@
 import socket  # noqa: F401
 import asyncio
 
+# In-memory data store for key-value pairs
+data_store = {}
+
 async def parse_resp(reader):
     """Parse a RESP message from the reader and return a list of strings."""
     line = await reader.readline()
@@ -41,6 +44,20 @@ async def handle_client(reader, writer):
                 arg = cmd[1]
                 resp = f"${len(arg)}\r\n{arg}\r\n".encode()
                 writer.write(resp)
+            elif command == "SET" and len(cmd) >= 3:
+                key = cmd[1]
+                value = cmd[2]
+                data_store[key] = value
+                writer.write(b"+OK\r\n")
+            elif command == "GET" and len(cmd) == 2:
+                key = cmd[1]
+                if key in data_store:
+                    value = data_store[key]
+                    resp = f"${len(value)}\r\n{value}\r\n".encode()
+                    writer.write(resp)
+                else:
+                    # Key doesn't exist - return null bulk string
+                    writer.write(b"$-1\r\n")
             else:
                 writer.write(b"-ERR unknown command\r\n")
             await writer.drain()
