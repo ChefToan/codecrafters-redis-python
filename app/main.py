@@ -8,7 +8,16 @@ def main():
     server_socket = socket.create_server(("localhost", 6379), reuse_port=True)
 
     connection, _ = server_socket.accept()
-    connection.sendall(b"+PONG\r\n")
+    while True:
+        data = connection.recv(1024)
+        if not data:
+            break
+        print(f"Received: {data.decode()}")
+        if data.startswith(b"PING\r\n"):
+            # Respond to PING with PONG
+            connection.sendall(b"+PONG\r\n")
+
+    # connection.sendall(b"+PONG\r\n")
 
 if __name__ == "__main__":
     main()
