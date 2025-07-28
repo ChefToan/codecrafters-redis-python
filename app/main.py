@@ -1,7 +1,9 @@
 import socket  # noqa: F401
 import asyncio
+import time
 
-# In-memory data store for key-value pairs
+# In-memory data store for key-value pairs with expiry
+# Structure: {key: {"value": value, "expiry": timestamp_or_None}}
 data_store = {}
 
 async def parse_resp(reader):
@@ -47,14 +49,35 @@ async def handle_client(reader, writer):
             elif command == "SET" and len(cmd) >= 3:
                 key = cmd[1]
                 value = cmd[2]
-                data_store[key] = value
+                expiry_time = None
+
+                # Check for PX argument (expiry in milliseconds)
+                if len(cmd) >= 5:
+                    for i in range(3, len(cmd) - 1):
+                        if cmd[i].upper() == "PX":
+                            try:
+                                expiry_ms = int(cmd[i + 1])
+                                expiry_time = time.time() + (expiry_ms / 1000.0)
+                                break
+                            except (ValueError, IndexError):
+                                pass
+
+                data_store[key] = {"value": value, "expiry": expiry_time}
                 writer.write(b"+OK\r\n")
             elif command == "GET" and len(cmd) == 2:
                 key = cmd[1]
                 if key in data_store:
-                    value = data_store[key]
-                    resp = f"${len(value)}\r\n{value}\r\n".encode()
-                    writer.write(resp)
+                    entry = data_store[key]
+                    # Check if key has expired
+                    if entry["expiry"] is not None and time.time() > entry["expiry"]:
+                        # Key has expired, remove it and return null
+                        del data_store[key]
+                        writer.write(b"$-1\r\n")
+                    else:
+                        # Key is valid, return the value
+                        value = entry["value"]
+                        resp = f"${len(value)}\r\n{value}\r\n".encode()
+                        writer.write(resp)
                 else:
                     # Key doesn't exist - return null bulk string
                     writer.write(b"$-1\r\n")
