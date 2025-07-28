@@ -1,52 +1,66 @@
 import socket  # noqa: F401
 import asyncio
 
+async def parse_resp(reader):
+    """Parse a RESP message from the reader and return a list of strings."""
+    line = await reader.readline()
+    if not line:
+        return None
+    if line.startswith(b'*'):
+        # Array
+        num_elements = int(line[1:].strip())
+        elements = []
+        for _ in range(num_elements):
+            bulk_len_line = await reader.readline()
+            if not bulk_len_line.startswith(b'$'):
+                return None
+            bulk_len = int(bulk_len_line[1:].strip())
+            bulk_data = await reader.readexactly(bulk_len)
+            await reader.readexactly(2)  # Discard \r\n
+            elements.append(bulk_data.decode())
+        return elements
+    else:
+        # Inline command (e.g., "PING\r\n")
+        return line.decode().strip().split()
 
 async def handle_client(reader, writer):
-    """Handle a single client connection asynchronously"""
     client_address = writer.get_extra_info('peername')
     print(f"New connection from {client_address}")
 
     try:
         while True:
-            data = await reader.read(1024)
-            if not data:
+            cmd = await parse_resp(reader)
+            if not cmd:
                 break
-            print(f"Received: {data.decode()}")
-
-            # Parse RESP2 format - check if it's a PING command
-            # PING can come as either "PING\r\n" or "*1\r\n$4\r\nPING\r\n"
-            data_str = data.decode()
-            if "PING" in data_str:
-                # Respond to PING with PONG
+            if len(cmd) == 0:
+                continue
+            command = cmd[0].upper()
+            if command == "PING":
                 writer.write(b"+PONG\r\n")
-                await writer.drain()  # Ensure data is sent
-
+            elif command == "ECHO" and len(cmd) == 2:
+                arg = cmd[1]
+                resp = f"${len(arg)}\r\n{arg}\r\n".encode()
+                writer.write(resp)
+            else:
+                writer.write(b"-ERR unknown command\r\n")
+            await writer.drain()
     except Exception as e:
         print(f"Error handling connection: {e}")
     finally:
         writer.close()
         await writer.wait_closed()
 
-
 async def main():
-    # You can use print statements as follows for debugging, they'll be visible when running tests.
     print("Logs from your program will appear here!")
-
-    # Start the asyncio server
     server = await asyncio.start_server(
         handle_client,
         "localhost",
         6379,
         reuse_port=True
     )
-
     print("Redis server started on localhost:6379")
-
-    # Keep the server running
     async with server:
         await server.serve_forever()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
